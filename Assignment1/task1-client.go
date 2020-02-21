@@ -3,12 +3,14 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"net"
 	"os"
+	"strconv"
 )
 
 const (
-	BUFFER_SIZE = 65495
+	BUFFER_SIZE     = 65495
 	CONNECTION_TYPE = "tcp"
 )
 
@@ -17,10 +19,10 @@ func main() {
 	port := os.Args[2]
 	fmt.Println("Server Ip:" + serverIP + " port:" + port)
 
-	connection, err := net.Dial(CONNECTION_TYPE, serverIP + ":" + port)
+	connection, err := net.Dial(CONNECTION_TYPE, serverIP+":"+port)
 
 	if err != nil {
-		fmt.Println("Error when connecting to server on: " + serverIP + ":" + port, err.Error())
+		fmt.Println("Error when connecting to server on: "+serverIP+":"+port, err.Error())
 		os.Exit(-1)
 
 	}
@@ -36,9 +38,29 @@ func main() {
 			_, _ = fmt.Scan(&username)
 			_, _ = fmt.Fprintf(connection, "1"+username+"\n")
 		} else if selection == 2 {
+			fmt.Println(">Enter the filename to store:")
+			var filePath string
+			_, _ = fmt.Scan(&filePath)
 
+			file, err := os.Open(filePath)
+			if err != nil {
+				fmt.Println("The file can't be opened", err)
+				continue
+			}
+
+			fileInfo, err := file.Stat()
+			if err != nil {
+				fmt.Println("Can't get the file info", err)
+				continue
+			}
+
+			fileSize := strconv.FormatInt(fileInfo.Size(), 10)
+			fileName := fileInfo.Name()
+
+			_, _ = fmt.Fprintf(connection, "2"+fileSize+":"+fileName+"\n")
+			SendFile(connection, file)
 		} else if selection == 3 {
-
+			fmt.Println(">Enter the filename to retrieve:")
 		} else if selection == 4 {
 			fmt.Println("Bye!")
 			return
@@ -50,4 +72,13 @@ func main() {
 	}
 }
 
-
+func SendFile(connection net.Conn, file *os.File)  {
+	sendBuffer := make([]byte, BUFFER_SIZE)
+	for {
+		_, err := file.Read(sendBuffer)
+		if err == io.EOF {
+			break
+		}
+		_, _ = connection.Write(sendBuffer)
+	}
+}
