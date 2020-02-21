@@ -20,6 +20,8 @@ const (
 	RESPONSE_STORE_SUCCESSFUL    = "%s stored successfully."
 	RESPONSE_STORE_FAIL          = "%s store failed."
 	RESPONSE_RETRIEVE_SUCCESSFUL = "%s found."
+	RESPONSE_NOT_AUTHORIZED      = "You are not logged in."
+	RESPONSE_FILE_READ_FAIL      = "File exists but cannot be reached at the moment."
 )
 
 func main() {
@@ -52,7 +54,13 @@ func HandleClientConnection(connection net.Conn) {
 	defer connection.Close()
 	var username string
 	for {
-		message, _ := bufio.NewReader(connection).ReadString('\n')
+		message, err := bufio.NewReader(connection).ReadString('\n')
+
+		// client closed the connection
+		// TODO: inspect error to validate connection is closed by client
+		if err != nil {
+			return
+		}
 
 		switch message[0] {
 		// ASCII Codes 1-> 49, 2 -> 50, ...
@@ -75,9 +83,45 @@ func HandleClientConnection(connection net.Conn) {
 				_, _ = connection.Write([]byte(fmt.Sprintf(RESPONSE_STORE_FAIL, fileName) + "\n"))
 			}
 		case 51:
+			if len(username) == 0 {
+				_, _ = connection.Write([]byte(RESPONSE_NOT_AUTHORIZED + "\n"))
+				continue
+			}
 
+			fileName := message[1 : len(message)-1]
+			fmt.Println(fileName)
+			file, err := os.Open(username + "/" + fileName)
+			if err != nil {
+				_, _ = connection.Write([]byte(RESPONSE_MISSING_FILE + "\n"))
+				continue
+			}
+
+			fileInfo, err := file.Stat()
+			if err != nil {
+				_ = file.Close()
+				_, _ = connection.Write([]byte(RESPONSE_FILE_READ_FAIL + "\n"))
+				continue
+			}
+
+			fileSize := strconv.FormatInt(fileInfo.Size(), 10)
+			fileName = fileInfo.Name()
+			_, _ = fmt.Fprintf(connection, "3"+fileSize+":"+fileName+"\n")
+			SendFile(connection, file)
+			_ = file.Close()
+			_, _ = connection.Write([]byte(fmt.Sprintf(RESPONSE_RETRIEVE_SUCCESSFUL, fileName) + "\n"))
 		case 52:
 		}
+	}
+}
+
+func SendFile(connection net.Conn, file *os.File) {
+	sendBuffer := make([]byte, BUFFER_SIZE)
+	for {
+		_, err := file.Read(sendBuffer)
+		if err == io.EOF {
+			break
+		}
+		_, _ = connection.Write(sendBuffer)
 	}
 }
 

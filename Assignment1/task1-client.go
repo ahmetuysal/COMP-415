@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 )
 
 const (
@@ -47,20 +48,35 @@ func main() {
 				fmt.Println("The file can't be opened", err)
 				continue
 			}
-
 			fileInfo, err := file.Stat()
 			if err != nil {
 				fmt.Println("Can't get the file info", err)
+				_ = file.Close()
 				continue
 			}
 
 			fileSize := strconv.FormatInt(fileInfo.Size(), 10)
 			fileName := fileInfo.Name()
-
 			_, _ = fmt.Fprintf(connection, "2"+fileSize+":"+fileName+"\n")
 			SendFile(connection, file)
+			_ = file.Close()
 		} else if selection == 3 {
 			fmt.Println(">Enter the filename to retrieve:")
+			var fileName string
+			_, _ = fmt.Scan(&fileName)
+			_, _ = fmt.Fprintf(connection, "3"+fileName+"\n")
+			serverResponse, _ = bufio.NewReader(connection).ReadString('\n')
+
+			if serverResponse[0] == 51 {
+				separatorIndex := strings.Index(serverResponse, ":")
+				fileSize, _ := strconv.ParseInt(serverResponse[1:separatorIndex], 10, 64)
+				fileName := serverResponse[separatorIndex+1 : len(serverResponse)-1]
+				_ = ReceiveFile(connection, fileName, fileSize)
+			} else  {
+				fmt.Print("Server Response: " + serverResponse)
+				continue
+			}
+
 		} else if selection == 4 {
 			fmt.Println("Bye!")
 			return
@@ -72,7 +88,7 @@ func main() {
 	}
 }
 
-func SendFile(connection net.Conn, file *os.File)  {
+func SendFile(connection net.Conn, file *os.File) {
 	sendBuffer := make([]byte, BUFFER_SIZE)
 	for {
 		_, err := file.Read(sendBuffer)
@@ -81,4 +97,26 @@ func SendFile(connection net.Conn, file *os.File)  {
 		}
 		_, _ = connection.Write(sendBuffer)
 	}
+}
+
+func ReceiveFile(connection net.Conn, fileName string, fileSize int64) bool {
+	newFile, err := os.Create(fileName)
+	if err != nil {
+		fmt.Println("The file can't be created", err)
+		return false
+	}
+	defer newFile.Close()
+
+	var receivedBytes int64
+
+	for {
+		if (fileSize - receivedBytes) < BUFFER_SIZE {
+			_, _ = io.CopyN(newFile, connection, fileSize-receivedBytes)
+			_, _ = connection.Read(make([]byte, (receivedBytes+BUFFER_SIZE)-fileSize))
+			break
+		}
+		_, _ = io.CopyN(newFile, connection, BUFFER_SIZE)
+		receivedBytes += BUFFER_SIZE
+	}
+	return true
 }
