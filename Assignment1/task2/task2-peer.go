@@ -33,7 +33,7 @@ type PeerDTO struct {
 
 func (peerInstance *Peer) FindSuccessor(id uint32, peerDTO *PeerDTO) error {
 	// fmt.Println("FindSuccessor")
-	// fmt.Println("%+v\n", peerInstance)
+	// fmt.Printf("%+v\n", peerInstance)
 	// if there is no successor, ring only consist of one peer and successor is the node itself
 	if peerInstance.SuccessorId == nil {
 		*peerDTO = PeerDTO{
@@ -66,7 +66,7 @@ func (peerInstance *Peer) FindSuccessor(id uint32, peerDTO *PeerDTO) error {
 		if err != nil {
 			return err
 		}
-		fmt.Println("%+v\n", successorOfId)
+		fmt.Printf("%+v\n", successorOfId)
 		*peerDTO = successorOfId
 	}
 
@@ -188,10 +188,22 @@ func main() {
 			}, &dummyDto)
 			_ = predecessorRpcConnection.Close()
 			// TODO: move the files
+
+			fmt.Println(">(Response): Connection Established")
 		case 2:
-
+			var key uint32
+			fmt.Print(">Enter the key to find its successor: ")
+			_, _ = fmt.Scan(&key)
+			var successor PeerDTO
+			_ = me.FindSuccessor(key, &successor)
+			successorIPAndPort := strings.Split(successor.Address, ":")
+			fmt.Printf(">(Response): (%d, %s, %s)\n", successor.Id, successorIPAndPort[0], successorIPAndPort[1])
 		case 3:
-
+			var fileName string
+			fmt.Print("3) Enter the filename to take its hash: ")
+			_, _ = fmt.Scan(&fileName)
+			fileNameHash := hashString(fileName)
+			fmt.Println(">(Response):", fileNameHash)
 		case 4:
 			if me.SuccessorId == nil {
 				fmt.Println("my-id:", me.Id, "succ-id:", me.SuccessorId, "pred-id:", me.PredecessorId)
@@ -199,7 +211,7 @@ func main() {
 				fmt.Println("my-id:", me.Id, "succ-id:", *me.SuccessorId, "pred-id:", *me.PredecessorId)
 			}
 		case 5:
-
+			fmt.Println("Stored keys and their associated file names:", me.FileNames)
 		case 6:
 			// if peer is connected to a ring, update succ and pred
 			if me.PredecessorId != nil {
