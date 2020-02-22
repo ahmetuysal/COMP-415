@@ -76,7 +76,7 @@ func HandleClientConnection(connection net.Conn) {
 			separatorIndex := strings.Index(message, ":")
 			fileSize, _ := strconv.ParseInt(message[1:separatorIndex], 10, 64)
 			fileName := message[separatorIndex+1 : len(message)-1]
-			fileReceiveSuccess := ReceiveFile(connection, username, fileName, fileSize)
+			fileReceiveSuccess := receiveFile(connection, username, fileName, fileSize)
 			if fileReceiveSuccess {
 				_, _ = connection.Write([]byte(fmt.Sprintf(RESPONSE_STORE_SUCCESSFUL, fileName) + "\n"))
 			} else {
@@ -106,7 +106,7 @@ func HandleClientConnection(connection net.Conn) {
 			fileSize := strconv.FormatInt(fileInfo.Size(), 10)
 			fileName = fileInfo.Name()
 			_, _ = fmt.Fprintf(connection, "3"+fileSize+":"+fileName+"\n")
-			SendFile(connection, file)
+			sendFile(connection, file)
 			_ = file.Close()
 			_, _ = connection.Write([]byte(fmt.Sprintf(RESPONSE_RETRIEVE_SUCCESSFUL, fileName) + "\n"))
 		case 52:
@@ -114,7 +114,7 @@ func HandleClientConnection(connection net.Conn) {
 	}
 }
 
-func SendFile(connection net.Conn, file *os.File) {
+func sendFile(connection net.Conn, file *os.File) {
 	sendBuffer := make([]byte, BUFFER_SIZE)
 	for {
 		_, err := file.Read(sendBuffer)
@@ -125,7 +125,7 @@ func SendFile(connection net.Conn, file *os.File) {
 	}
 }
 
-func ReceiveFile(connection net.Conn, folder string, fileName string, fileSize int64) bool {
+func receiveFile(connection net.Conn, folder string, fileName string, fileSize int64) bool {
 	CreateDirIfNotExist(folder)
 
 	newFile, err := os.Create(folder + "/" + fileName)

@@ -58,7 +58,7 @@ func main() {
 			fileSize := strconv.FormatInt(fileInfo.Size(), 10)
 			fileName := fileInfo.Name()
 			_, _ = fmt.Fprintf(connection, "2"+fileSize+":"+fileName+"\n")
-			SendFile(connection, file)
+			sendFile(connection, file)
 			_ = file.Close()
 		} else if selection == 3 {
 			fmt.Println(">Enter the filename to retrieve:")
@@ -71,7 +71,7 @@ func main() {
 				separatorIndex := strings.Index(serverResponse, ":")
 				fileSize, _ := strconv.ParseInt(serverResponse[1:separatorIndex], 10, 64)
 				fileName := serverResponse[separatorIndex+1 : len(serverResponse)-1]
-				_ = ReceiveFile(connection, fileName, fileSize)
+				_ = receiveFile(connection, fileName, fileSize)
 			} else {
 				fmt.Print("Server Response: " + serverResponse)
 				continue
@@ -88,7 +88,7 @@ func main() {
 	}
 }
 
-func SendFile(connection net.Conn, file *os.File) {
+func sendFile(connection net.Conn, file *os.File) {
 	sendBuffer := make([]byte, BUFFER_SIZE)
 	for {
 		_, err := file.Read(sendBuffer)
@@ -99,7 +99,7 @@ func SendFile(connection net.Conn, file *os.File) {
 	}
 }
 
-func ReceiveFile(connection net.Conn, fileName string, fileSize int64) bool {
+func receiveFile(connection net.Conn, fileName string, fileSize int64) bool {
 	newFile, err := os.Create(fileName)
 	if err != nil {
 		fmt.Println("The file can't be created", err)

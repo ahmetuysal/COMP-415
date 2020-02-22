@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
+	"io/ioutil"
 	"net"
 	"net/rpc"
 	"os"
@@ -13,6 +14,7 @@ import (
 const (
 	OPTIONS         = "1) Enter the peer address to connect:\n2) Enter the key to find its successor:\n3) Enter the filename to take its hash:\n4) Display my-id, succ-id, and pred-id:\n5) Display the stored filenames and their keys:\n6) Exit."
 	CONNECTION_TYPE = "tcp"
+	BUFFER_SIZE     = 65495
 )
 
 type Peer struct {
@@ -22,13 +24,19 @@ type Peer struct {
 	SuccessorAddress   *string
 	PredecessorId      *uint32
 	PredecessorAddress *string
-	FileIDs            []uint32
-	FileNames          map[uint32]string
+	// filename contains both user and file name, e.g, ahmet/task2-peer.go
+	FileNames map[uint32]string
 }
 
 type PeerDTO struct {
 	Id      uint32
 	Address string
+}
+
+type FileDTO struct {
+	FileContent []byte
+	Folder      string
+	FileName    string
 }
 
 func (peerInstance *Peer) FindSuccessor(id uint32, peerDTO *PeerDTO) error {
@@ -40,7 +48,7 @@ func (peerInstance *Peer) FindSuccessor(id uint32, peerDTO *PeerDTO) error {
 			Id:      peerInstance.Id,
 			Address: peerInstance.Address,
 		}
-	} else if *peerInstance.PredecessorId < id && id <= peerInstance.Id {
+	} else if (*peerInstance.PredecessorId < id || peerInstance.Id < *peerInstance.PredecessorId) && id <= peerInstance.Id {
 		*peerDTO = PeerDTO{
 			Id:      peerInstance.Id,
 			Address: peerInstance.Address,
@@ -66,29 +74,61 @@ func (peerInstance *Peer) FindSuccessor(id uint32, peerDTO *PeerDTO) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("%+v\n", successorOfId)
 		*peerDTO = successorOfId
 	}
-
 	return nil
 }
 
 func (peerInstance *Peer) SetPredecessor(peerDTO *PeerDTO, exPredecessor *PeerDTO) error {
-	// fmt.Println("SetPredecessor")
 	if peerInstance.PredecessorId != nil {
 		*exPredecessor = PeerDTO{
 			Id:      *peerInstance.PredecessorId,
 			Address: *peerInstance.PredecessorAddress,
 		}
 	}
-
 	peerInstance.PredecessorId = &peerDTO.Id
 	peerInstance.PredecessorAddress = &peerDTO.Address
+
+	predecessorRpcConnection, err := rpc.Dial(CONNECTION_TYPE, peerDTO.Address)
+	if err != nil {
+		return err
+	}
+
+	for fileHash, filename := range peerInstance.FileNames {
+		// TODO: validate this condition
+		if (peerInstance.Id > peerDTO.Id && (fileHash > peerInstance.Id || fileHash <= peerDTO.Id)) || (peerDTO.Id > peerInstance.Id && fileHash > peerInstance.Id) {
+			file, err := os.Open(filename)
+			if err != nil {
+				fmt.Println("The file can't be opened", err)
+				continue
+			}
+
+			fileInfo, err := file.Stat()
+			if err != nil {
+				fmt.Println("Can't get the file info", err)
+				_ = file.Close()
+				continue
+			}
+
+			fileContent := make([]byte, fileInfo.Size())
+			_, _ = file.Read(fileContent)
+
+			lastIndex := strings.LastIndex(filename, "/")
+
+			var isSuccessful bool
+			_ = predecessorRpcConnection.Call("Peer.ReceiveFile", FileDTO{
+				FileContent: fileContent,
+				Folder:      filename[0:lastIndex],
+				FileName:    filename[lastIndex+1:],
+			}, &isSuccessful)
+		}
+	}
+	_ = predecessorRpcConnection.Close()
+
 	return nil
 }
 
 func (peerInstance *Peer) SetSuccessor(peerDTO *PeerDTO, exSuccessor *PeerDTO) error {
-	// fmt.Println("SetSuccessor")
 	if peerInstance.SuccessorId != nil {
 		*exSuccessor = PeerDTO{
 			Id:      *peerInstance.SuccessorId,
@@ -97,6 +137,21 @@ func (peerInstance *Peer) SetSuccessor(peerDTO *PeerDTO, exSuccessor *PeerDTO) e
 	}
 	peerInstance.SuccessorId = &peerDTO.Id
 	peerInstance.SuccessorAddress = &peerDTO.Address
+	return nil
+}
+
+func (peerInstance *Peer) ReceiveFile(fileDTO *FileDTO, isSuccessful *bool) error {
+	fmt.Println("Receiving file", fileDTO.Folder, fileDTO.FileName)
+	CreateDirIfNotExist(fileDTO.Folder)
+
+	err := ioutil.WriteFile(fileDTO.Folder+"/"+fileDTO.FileName, fileDTO.FileContent, 0644)
+	if err != nil {
+		*isSuccessful = false
+		return err
+	}
+	fileName := fileDTO.Folder + "/" + fileDTO.FileName
+	peerInstance.FileNames[hashString(fileName)] = fileName
+	*isSuccessful = true
 	return nil
 }
 
@@ -121,7 +176,6 @@ func main() {
 	tcpAddr, _ := net.ResolveTCPAddr(CONNECTION_TYPE, ":"+port)
 	listener, _ := net.ListenTCP(CONNECTION_TYPE, tcpAddr)
 	go listenForRpcConnections(listener)
-	go listenForTcpConnections()
 
 	/*
 		Message format:
@@ -187,7 +241,8 @@ func main() {
 				Address: me.Address,
 			}, &dummyDto)
 			_ = predecessorRpcConnection.Close()
-			// TODO: move the files
+
+			// Note: responsibility of moving files is delegated to SetSuccessor method
 
 			fmt.Println(">(Response): Connection Established")
 		case 2:
@@ -215,18 +270,7 @@ func main() {
 		case 6:
 			// if peer is connected to a ring, update succ and pred
 			if me.PredecessorId != nil {
-				predecessorRpcConnection, err := rpc.Dial(CONNECTION_TYPE, *me.PredecessorAddress)
-				if err != nil {
-					fmt.Println("Error when connecting to peer on: "+*me.PredecessorAddress, err.Error())
-					continue
-				}
 				var dummyDto PeerDTO
-				_ = predecessorRpcConnection.Call("Peer.SetSuccessor", PeerDTO{
-					Id:      *me.SuccessorId,
-					Address: *me.SuccessorAddress,
-				}, &dummyDto)
-
-				_ = predecessorRpcConnection.Close()
 
 				successorRpcConnection, err := rpc.Dial(CONNECTION_TYPE, *me.SuccessorAddress)
 				if err != nil {
@@ -237,18 +281,48 @@ func main() {
 					Address: *me.PredecessorAddress,
 				}, &dummyDto)
 
-				// TODO: transfer files
+				predecessorRpcConnection, err := rpc.Dial(CONNECTION_TYPE, *me.PredecessorAddress)
+				if err != nil {
+					fmt.Println("Error when connecting to peer on: "+*me.PredecessorAddress, err.Error())
+					continue
+				}
+
+				_ = predecessorRpcConnection.Call("Peer.SetSuccessor", PeerDTO{
+					Id:      *me.SuccessorId,
+					Address: *me.SuccessorAddress,
+				}, &dummyDto)
+
+				for _, filename := range me.FileNames {
+					file, err := os.Open(filename)
+					if err != nil {
+						fmt.Println("The file can't be opened", err)
+						continue
+					}
+
+					fileInfo, err := file.Stat()
+					if err != nil {
+						fmt.Println("Can't get the file info", err)
+						_ = file.Close()
+						continue
+					}
+
+					fileContent := make([]byte, fileInfo.Size())
+					_, _ = file.Read(fileContent)
+
+					lastIndex := strings.LastIndex(filename, "/")
+
+					var isSuccessful bool
+					_ = predecessorRpcConnection.Call("Peer.ReceiveFile", FileDTO{
+						FileContent: fileContent,
+						Folder:      filename[0:lastIndex],
+						FileName:    filename[lastIndex+1:],
+					}, &isSuccessful)
+				}
+				_ = predecessorRpcConnection.Close()
 			}
 			fmt.Println("Bye!")
 			return
 		}
-
-	}
-}
-
-func listenForTcpConnections() {
-	for {
-		continue
 	}
 }
 
@@ -265,4 +339,14 @@ func listenForRpcConnections(listener *net.TCPListener) {
 func hashString(value string) uint32 {
 	hashVal := sha256.Sum256([]byte(value))
 	return binary.BigEndian.Uint32(hashVal[:])
+}
+
+// Work of Siong-Ui Te: https://siongui.github.io/2017/03/28/go-create-directory-if-not-exist/
+func CreateDirIfNotExist(dir string) {
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		err = os.MkdirAll(dir, 0755)
+		if err != nil {
+			panic(err)
+		}
+	}
 }
