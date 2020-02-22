@@ -16,24 +16,24 @@ const (
 )
 
 type Peer struct {
-	Id                 int32
+	Id                 uint32
 	Address            string
-	SuccessorId        *int32
+	SuccessorId        *uint32
 	SuccessorAddress   *string
-	PredecessorId      *int32
+	PredecessorId      *uint32
 	PredecessorAddress *string
-	FileIDs            []int32
-	FileNames          map[int32]string
+	FileIDs            []uint32
+	FileNames          map[uint32]string
 }
 
 type PeerDTO struct {
-	Id      int32
+	Id      uint32
 	Address string
 }
 
-func (peerInstance *Peer) FindSuccessor(id int32, peerDTO *PeerDTO) error {
-	fmt.Println("FindSuccessor")
-	fmt.Println("%+v\n", peerInstance)
+func (peerInstance *Peer) FindSuccessor(id uint32, peerDTO *PeerDTO) error {
+	// fmt.Println("FindSuccessor")
+	// fmt.Println("%+v\n", peerInstance)
 	// if there is no successor, ring only consist of one peer and successor is the node itself
 	if peerInstance.SuccessorId == nil {
 		*peerDTO = PeerDTO{
@@ -74,7 +74,7 @@ func (peerInstance *Peer) FindSuccessor(id int32, peerDTO *PeerDTO) error {
 }
 
 func (peerInstance *Peer) SetPredecessor(peerDTO *PeerDTO, exPredecessor *PeerDTO) error {
-	fmt.Println("SetPredecessor")
+	// fmt.Println("SetPredecessor")
 	if peerInstance.PredecessorId != nil {
 		*exPredecessor = PeerDTO{
 			Id:      *peerInstance.PredecessorId,
@@ -88,7 +88,7 @@ func (peerInstance *Peer) SetPredecessor(peerDTO *PeerDTO, exPredecessor *PeerDT
 }
 
 func (peerInstance *Peer) SetSuccessor(peerDTO *PeerDTO, exSuccessor *PeerDTO) error {
-	fmt.Println("SetSuccessor")
+	// fmt.Println("SetSuccessor")
 	if peerInstance.SuccessorId != nil {
 		*exSuccessor = PeerDTO{
 			Id:      *peerInstance.SuccessorId,
@@ -113,7 +113,7 @@ func main() {
 	me := Peer{
 		Id:        hashString(address),
 		Address:   address,
-		FileNames: make(map[int32]string),
+		FileNames: make(map[uint32]string),
 	}
 
 	_ = rpc.Register(&me)
@@ -250,7 +250,7 @@ func listenForRpcConnections(listener *net.TCPListener) {
 	}
 }
 
-func hashString(value string) int32 {
+func hashString(value string) uint32 {
 	hashVal := sha256.Sum256([]byte(value))
-	return int32(binary.BigEndian.Uint32(hashVal[:]))
+	return binary.BigEndian.Uint32(hashVal[:])
 }
