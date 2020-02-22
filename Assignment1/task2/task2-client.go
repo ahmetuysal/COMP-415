@@ -39,8 +39,8 @@ func main() {
 	serverIP := os.Args[1]
 	port := os.Args[2]
 	fmt.Println("Server Ip:" + serverIP + " port:" + port)
-
-	connection, err := rpc.Dial(CONNECTION_TYPE, serverIP+":"+port)
+	address := serverIP + ":" + port
+	connection, err := rpc.Dial(CONNECTION_TYPE, address)
 
 	if err != nil {
 		fmt.Println("Error when connecting to server on: "+serverIP+":"+port, err.Error())
@@ -74,6 +74,8 @@ func main() {
 			var successorOfFile PeerDTO
 			_ = connection.Call("Peer.FindSuccessor", fileHash, &successorOfFile)
 
+			fmt.Printf("%+x\n", successorOfFile)
+
 			fileContent := make([]byte, fileInfo.Size())
 			_, _ = file.Read(fileContent)
 			_ = file.Close()
@@ -83,11 +85,17 @@ func main() {
 				FileName:    fileInfo.Name(),
 			}
 
-			fileConnection, err := rpc.Dial(CONNECTION_TYPE, successorOfFile.Address)
+			var fileConnection *rpc.Client
+			if successorOfFile.Address == address {
+				fileConnection = connection
+			} else {
+				fileConnection, err = rpc.Dial(CONNECTION_TYPE, successorOfFile.Address)
+			}
 			var isSuccessful bool
 			_ = fileConnection.Call("Peer.ReceiveFile", fileDto, &isSuccessful)
-			_ = fileConnection.Close()
-
+			if successorOfFile.Address != address {
+				_ = fileConnection.Close()
+			}
 			if isSuccessful {
 				fmt.Printf(">Server Response: %s stored successfully.\n", fileInfo.Name())
 			} else {
@@ -100,12 +108,24 @@ func main() {
 
 			fileHash := hashString(fileName)
 			var successorOfFile PeerDTO
-			_ = connection.Call("Peer.FindSuccessor", fileHash, &successorOfFile)
-			fileConnection, err := rpc.Dial(CONNECTION_TYPE, successorOfFile.Address)
+			err = connection.Call("Peer.FindSuccessor", fileHash, &successorOfFile)
+			fmt.Println("After find successor")
+			if err != nil {
+				fmt.Println("Err:", err)
+			}
+
+			var fileConnection *rpc.Client
+			if successorOfFile.Address == address {
+				fileConnection = connection
+			} else {
+				fileConnection, err = rpc.Dial(CONNECTION_TYPE, successorOfFile.Address)
+			}
 			var fileDTO FileDTO
 
 			err = fileConnection.Call("Peer.SendFile", fileName, &fileDTO)
-			_ = fileConnection.Close()
+			if successorOfFile.Address != address {
+				_ = fileConnection.Close()
+			}
 			if err != nil {
 				fmt.Println(">Server Response: File does not exist.")
 			} else {

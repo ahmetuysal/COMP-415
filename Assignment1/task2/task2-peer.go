@@ -39,7 +39,7 @@ type FileDTO struct {
 }
 
 func (peerInstance *Peer) FindSuccessor(id uint32, peerDTO *PeerDTO) error {
-	// fmt.Println("FindSuccessor")
+	fmt.Printf("FindSuccessor %d\n", id)
 	// fmt.Printf("%+v\n", peerInstance)
 	// if there is no successor, ring only consist of one peer and successor is the node itself
 	if peerInstance.SuccessorId == nil {
@@ -75,10 +75,14 @@ func (peerInstance *Peer) FindSuccessor(id uint32, peerDTO *PeerDTO) error {
 		}
 		*peerDTO = successorOfId
 	}
+
+	fmt.Println("Find Successor last line")
+
 	return nil
 }
 
 func (peerInstance *Peer) SetPredecessor(peerDTO *PeerDTO, exPredecessor *PeerDTO) error {
+	fmt.Printf("Set Predecessor %+x\n", peerDTO)
 	if peerInstance.PredecessorId != nil {
 		*exPredecessor = PeerDTO{
 			Id:      *peerInstance.PredecessorId,
@@ -125,6 +129,7 @@ func (peerInstance *Peer) SetPredecessor(peerDTO *PeerDTO, exPredecessor *PeerDT
 }
 
 func (peerInstance *Peer) SetSuccessor(peerDTO *PeerDTO, exSuccessor *PeerDTO) error {
+	fmt.Printf("Set Successor %+x\n", peerDTO)
 	if peerInstance.SuccessorId != nil {
 		*exSuccessor = PeerDTO{
 			Id:      *peerInstance.SuccessorId,
@@ -149,6 +154,7 @@ func (peerInstance *Peer) ReceiveFile(fileDTO *FileDTO, isSuccessful *bool) erro
 }
 
 func (peerInstance *Peer) SendFile(fileName string , fileDTO *FileDTO) error {
+	fmt.Printf("Send File %s\n", fileName)
 	file, err := os.Open(fileName)
 	if err != nil {
 		return err
