@@ -32,6 +32,8 @@ type PeerDTO struct {
 }
 
 func (peerInstance *Peer) FindSuccessor(id int32, peerDTO *PeerDTO) error {
+	fmt.Println("FindSuccessor")
+	fmt.Println("%+v\n", peerInstance)
 	// if there is no successor, ring only consist of one peer and successor is the node itself
 	if peerInstance.SuccessorId == nil {
 		*peerDTO = PeerDTO{
@@ -60,6 +62,11 @@ func (peerInstance *Peer) FindSuccessor(id int32, peerDTO *PeerDTO) error {
 		if err != nil {
 			return err
 		}
+		err = successorOfPeerInstance.Close()
+		if err != nil {
+			return err
+		}
+		fmt.Println("%+v\n", successorOfId)
 		*peerDTO = successorOfId
 	}
 
@@ -67,6 +74,7 @@ func (peerInstance *Peer) FindSuccessor(id int32, peerDTO *PeerDTO) error {
 }
 
 func (peerInstance *Peer) SetPredecessor(peerDTO *PeerDTO, exPredecessor *PeerDTO) error {
+	fmt.Println("SetPredecessor")
 	if peerInstance.PredecessorId != nil {
 		*exPredecessor = PeerDTO{
 			Id:      *peerInstance.PredecessorId,
@@ -80,6 +88,7 @@ func (peerInstance *Peer) SetPredecessor(peerDTO *PeerDTO, exPredecessor *PeerDT
 }
 
 func (peerInstance *Peer) SetSuccessor(peerDTO *PeerDTO, exSuccessor *PeerDTO) error {
+	fmt.Println("SetSuccessor")
 	if peerInstance.SuccessorId != nil {
 		*exSuccessor = PeerDTO{
 			Id:      *peerInstance.SuccessorId,
@@ -129,6 +138,7 @@ func main() {
 		switch selection {
 		case 1:
 			var peerAddress string
+			fmt.Print(">Enter the peer address to connect:")
 			_, _ = fmt.Scan(&peerAddress)
 			rpcConnection, err := rpc.Dial(CONNECTION_TYPE, peerAddress)
 			if err != nil {
@@ -176,7 +186,7 @@ func main() {
 				Id:      me.Id,
 				Address: me.Address,
 			}, &dummyDto)
-
+			_ = predecessorRpcConnection.Close()
 			// TODO: move the files
 		case 2:
 
@@ -191,8 +201,33 @@ func main() {
 		case 5:
 
 		case 6:
+			// if peer is connected to a ring, update succ and pred
+			if me.PredecessorId != nil {
+				predecessorRpcConnection, err := rpc.Dial(CONNECTION_TYPE, *me.PredecessorAddress)
+				if err != nil {
+					fmt.Println("Error when connecting to peer on: "+*me.PredecessorAddress, err.Error())
+					continue
+				}
+				var dummyDto PeerDTO
+				_ = predecessorRpcConnection.Call("Peer.SetSuccessor", PeerDTO{
+					Id:      *me.SuccessorId,
+					Address: *me.SuccessorAddress,
+				}, &dummyDto)
+
+				_ = predecessorRpcConnection.Close()
+
+				successorRpcConnection, err := rpc.Dial(CONNECTION_TYPE, *me.SuccessorAddress)
+				if err != nil {
+					fmt.Println("Error when connecting to peer on: "+*me.SuccessorAddress, err.Error())
+				}
+				_ = successorRpcConnection.Call("Peer.SetPredecessor", PeerDTO{
+					Id:      *me.PredecessorId,
+					Address: *me.PredecessorAddress,
+				}, &dummyDto)
+
+				// TODO: transfer files
+			}
 			fmt.Println("Bye!")
-			// TODO: exit the ring
 			return
 		}
 
