@@ -38,19 +38,6 @@ type FileDTO struct {
 	FileName    string
 }
 
-type ClientRequest struct {
-	code    int
-	payload string
-}
-
-type ClientResponse struct {
-	response string
-}
-
-func (peerInstance *Peer) HandleClientRequest(request *ClientRequest, response *ClientResponse) error {
-
-}
-
 func (peerInstance *Peer) FindSuccessor(id uint32, peerDTO *PeerDTO) error {
 	// fmt.Println("FindSuccessor")
 	// fmt.Printf("%+v\n", peerInstance)
@@ -160,6 +147,25 @@ func (peerInstance *Peer) ReceiveFile(fileDTO *FileDTO, isSuccessful *bool) erro
 	*isSuccessful = true
 	return nil
 }
+
+func (peerInstance *Peer) SendFile(fileName string , fileDTO *FileDTO) error {
+	file, err := os.Open(fileName)
+	if err != nil {
+		return err
+	}
+
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return err
+	}
+
+	fileContent := make([]byte, fileInfo.Size())
+	_, _ = file.Read(fileContent)
+	fileDTO.FileName = fileInfo.Name()
+	fileDTO.FileContent = fileContent
+	return nil
+}
+
 
 func main() {
 	port := os.Args[1]
