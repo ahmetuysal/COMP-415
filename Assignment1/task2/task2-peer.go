@@ -35,8 +35,20 @@ type PeerDTO struct {
 
 type FileDTO struct {
 	FileContent []byte
-	Folder      string
 	FileName    string
+}
+
+type ClientRequest struct {
+	code    int
+	payload string
+}
+
+type ClientResponse struct {
+	response string
+}
+
+func (peerInstance *Peer) HandleClientRequest(request *ClientRequest, response *ClientResponse) error {
+
 }
 
 func (peerInstance *Peer) FindSuccessor(id uint32, peerDTO *PeerDTO) error {
@@ -113,13 +125,10 @@ func (peerInstance *Peer) SetPredecessor(peerDTO *PeerDTO, exPredecessor *PeerDT
 			fileContent := make([]byte, fileInfo.Size())
 			_, _ = file.Read(fileContent)
 
-			lastIndex := strings.LastIndex(filename, "/")
-
 			var isSuccessful bool
 			_ = predecessorRpcConnection.Call("Peer.ReceiveFile", FileDTO{
 				FileContent: fileContent,
-				Folder:      filename[0:lastIndex],
-				FileName:    filename[lastIndex+1:],
+				FileName:    filename,
 			}, &isSuccessful)
 		}
 	}
@@ -141,16 +150,13 @@ func (peerInstance *Peer) SetSuccessor(peerDTO *PeerDTO, exSuccessor *PeerDTO) e
 }
 
 func (peerInstance *Peer) ReceiveFile(fileDTO *FileDTO, isSuccessful *bool) error {
-	fmt.Println("Receiving file", fileDTO.Folder, fileDTO.FileName)
-	CreateDirIfNotExist(fileDTO.Folder)
-
-	err := ioutil.WriteFile(fileDTO.Folder+"/"+fileDTO.FileName, fileDTO.FileContent, 0644)
+	fmt.Println("Receiving file", fileDTO.FileName)
+	err := ioutil.WriteFile(fileDTO.FileName, fileDTO.FileContent, 0644)
 	if err != nil {
 		*isSuccessful = false
 		return err
 	}
-	fileName := fileDTO.Folder + "/" + fileDTO.FileName
-	peerInstance.FileNames[hashString(fileName)] = fileName
+	peerInstance.FileNames[hashString(fileDTO.FileName)] = fileDTO.FileName
 	*isSuccessful = true
 	return nil
 }
@@ -309,13 +315,10 @@ func main() {
 					fileContent := make([]byte, fileInfo.Size())
 					_, _ = file.Read(fileContent)
 
-					lastIndex := strings.LastIndex(filename, "/")
-
 					var isSuccessful bool
 					_ = predecessorRpcConnection.Call("Peer.ReceiveFile", FileDTO{
 						FileContent: fileContent,
-						Folder:      filename[0:lastIndex],
-						FileName:    filename[lastIndex+1:],
+						FileName:    fileInfo.Name(),
 					}, &isSuccessful)
 				}
 				_ = predecessorRpcConnection.Close()
@@ -339,14 +342,4 @@ func listenForRpcConnections(listener *net.TCPListener) {
 func hashString(value string) uint32 {
 	hashVal := sha256.Sum256([]byte(value))
 	return binary.BigEndian.Uint32(hashVal[:])
-}
-
-// Work of Siong-Ui Te: https://siongui.github.io/2017/03/28/go-create-directory-if-not-exist/
-func CreateDirIfNotExist(dir string) {
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		err = os.MkdirAll(dir, 0755)
-		if err != nil {
-			panic(err)
-		}
-	}
 }
