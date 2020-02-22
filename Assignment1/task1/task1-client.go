@@ -72,7 +72,7 @@ func main() {
 				fileSize, _ := strconv.ParseInt(serverResponse[1:separatorIndex], 10, 64)
 				fileName := serverResponse[separatorIndex+1 : len(serverResponse)-1]
 				_ = ReceiveFile(connection, fileName, fileSize)
-			} else  {
+			} else {
 				fmt.Print("Server Response: " + serverResponse)
 				continue
 			}
@@ -106,7 +106,6 @@ func ReceiveFile(connection net.Conn, fileName string, fileSize int64) bool {
 		return false
 	}
 	defer newFile.Close()
-
 	var receivedBytes int64
 
 	for {
