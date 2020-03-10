@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -55,15 +56,22 @@ func main() {
 				continue
 			}
 
+			storeStartTime := time.Now()
 			fileSize := strconv.FormatInt(fileInfo.Size(), 10)
 			fileName := fileInfo.Name()
 			_, _ = fmt.Fprintf(connection, "2"+fileSize+":"+fileName+"\n")
 			sendFile(connection, file)
 			_ = file.Close()
+			storeFinishTime := time.Since(storeStartTime)
+			fmt.Printf("%d KBs stored in %f seconds\n", fileInfo.Size()/1024.0, storeFinishTime.Seconds())
+
 		} else if selection == 3 {
 			fmt.Println(">Enter the filename to retrieve:")
 			var fileName string
 			_, _ = fmt.Scan(&fileName)
+
+			retrieveStartTime := time.Now()
+
 			_, _ = fmt.Fprintf(connection, "3"+fileName+"\n")
 			serverResponse, _ = bufio.NewReader(connection).ReadString('\n')
 
@@ -72,11 +80,12 @@ func main() {
 				fileSize, _ := strconv.ParseInt(serverResponse[1:separatorIndex], 10, 64)
 				fileName := serverResponse[separatorIndex+1 : len(serverResponse)-1]
 				_ = receiveFile(connection, fileName, fileSize)
+				retrieveEndTime := time.Since(retrieveStartTime)
+				fmt.Printf("%d KBs retrieved in %f seconds\n", fileSize/1024.0, retrieveEndTime.Seconds())
 			} else {
 				fmt.Print("Server Response: " + serverResponse)
 				continue
 			}
-
 		} else if selection == 4 {
 			fmt.Println("Bye!")
 			return

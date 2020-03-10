@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"net/rpc"
 	"os"
+	"time"
 )
 
 const (
@@ -71,6 +72,8 @@ func main() {
 
 			fileHash := hashString(fileInfo.Name())
 
+			storeStartTime := time.Now()
+
 			var successorOfFile PeerDTO
 			_ = connection.Call("Peer.FindSuccessor", fileHash, &successorOfFile)
 
@@ -101,6 +104,11 @@ func main() {
 			} else {
 				fmt.Printf(">Server Response: Error occurred when storing %s.\n", fileInfo.Name())
 			}
+
+			storeEndTime := time.Since(storeStartTime)
+
+			fmt.Printf("%d KBs stored in %f seconds\n", fileInfo.Size()/1024.0, storeEndTime.Seconds())
+
 		} else if selection == 2 {
 			fmt.Println(">Enter the filename to retrieve:")
 			var fileName string
@@ -108,6 +116,7 @@ func main() {
 
 			fileHash := hashString(fileName)
 			var successorOfFile PeerDTO
+			retrieveStartTime := time.Now()
 			err = connection.Call("Peer.FindSuccessor", fileHash, &successorOfFile)
 			fmt.Println("After find successor")
 			if err != nil {
@@ -135,6 +144,8 @@ func main() {
 					fmt.Println("Error occurred when saving the file")
 				}
 			}
+			retrieveEndTime := time.Since(retrieveStartTime)
+			fmt.Printf("%d KBs retrieved in %f seconds\n", len(fileDTO.FileContent)/1024.0, retrieveEndTime.Seconds())
 		} else if selection == 3 {
 			fmt.Println("Bye!")
 			_ = connection.Close()

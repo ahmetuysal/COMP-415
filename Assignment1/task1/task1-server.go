@@ -13,7 +13,7 @@ import (
 const (
 	BUFFER_SIZE                  = 65495
 	CONNECTION_TYPE              = "tcp"
-	CONNECTION_HOST              = "localhost"
+	CONNECTION_HOST              = ""
 	RESPONSE_LOGIN_SUCCESSFUL    = "Login successful."
 	RESPONSE_INVALID_LOGIN       = "Invalid credentials."
 	RESPONSE_MISSING_FILE        = "File does not exist."
