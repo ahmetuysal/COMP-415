@@ -6,19 +6,13 @@ import (
     "net"
     "net/rpc"
     "os"
+    "sync"
 )
 
 const (
     DEFAULT_PORT    = "4444" // Use this default port if it isn't specified via command line arguments
     CONNECTION_TYPE = "tcp"
 )
-
-type MessengerProcess struct {
-    OID                 string
-    QueuedMessages      []MessageDTO
-    VectorClock         []int
-    VectorClockIndexMap map[string]int
-}
 
 type MessageDTO struct {
     Transcript string
@@ -30,14 +24,13 @@ type MessageDTO struct {
 // it returns true if (message.TimeStamp[i] = VectorClock[i] + 1 for i = index of original sender id in vector clock
 //				      and message.TimeStamp[k] <= VectorClock[k] for all k != i)
 // it returns false otherwise
-func (messengerProcess *MessengerProcess) shouldDeliverMessageToApplication(message MessageDTO) bool {
-    i := messengerProcess.VectorClockIndexMap[message.OID]
-    if message.TimeStamp[i] != messengerProcess.VectorClock[i]+1 {
+func (message MessageDTO) shouldDeliverMessageToApplication(vectorClock []int, senderProcessIndex int) bool {
+    if message.TimeStamp[senderProcessIndex] != vectorClock[senderProcessIndex]+1 {
         return false
     }
 
-    for k, time := range messengerProcess.VectorClock {
-        if k == i {
+    for k, time := range vectorClock {
+        if k == senderProcessIndex {
             continue
         }
         if message.TimeStamp[k] > time {
@@ -48,10 +41,64 @@ func (messengerProcess *MessengerProcess) shouldDeliverMessageToApplication(mess
     return true
 }
 
+// Concurrent Message Slice Implementation
+// Created by following https://dnaeon.github.io/concurrent-maps-and-slices-in-go/
+type ConcurrentMessageSlice struct {
+    sync.RWMutex
+    messages []MessageDTO
+}
+
+func (cms *ConcurrentMessageSlice) append(message MessageDTO) {
+    cms.Lock()
+    defer cms.Unlock()
+    cms.messages = append(cms.messages, message)
+}
+
+// Note: Removal of messages from the slice is implemented in MessengerProcess struct
+
+// End of Concurrent Message Slice Implementation
+
+type MessengerProcess struct {
+    OID                 string
+    QueuedMessages      ConcurrentMessageSlice
+    VectorClock         []int
+    VectorClockIndexMap map[string]int
+}
+
+func (messengerProcess *MessengerProcess) popNextMessageToDeliver() (MessageDTO, bool) {
+    var nextMessageToDeliver MessageDTO
+    var nextMessageToDeliverIndex int
+    messengerProcess.QueuedMessages.Lock()
+    defer messengerProcess.QueuedMessages.Unlock()
+
+    for index, queuedMessage := range messengerProcess.QueuedMessages.messages {
+        if messengerProcess.shouldDeliverMessageToApplication(queuedMessage) {
+            nextMessageToDeliver = queuedMessage
+            nextMessageToDeliverIndex = index
+            break
+        }
+    }
+
+    // no message satisfies the condition
+    if nextMessageToDeliver.OID == "" {
+        return MessageDTO{}, false
+    }
+    messengerProcess.deliverMessageToApplication(nextMessageToDeliver)
+    messengerProcess.QueuedMessages.messages = append(messengerProcess.QueuedMessages.messages[:nextMessageToDeliverIndex],
+        messengerProcess.QueuedMessages.messages[nextMessageToDeliverIndex+1:]...)
+    return nextMessageToDeliver, true
+}
+
+// Returns whether this message can be immediately delivered according to causally ordered multicast algorithm, i.e,
+// it returns true if (message.TimeStamp[i] = VectorClock[i] + 1 for i = index of original sender id in vector clock
+//				      and message.TimeStamp[k] <= VectorClock[k] for all k != i)
+// it returns false otherwise
+func (messengerProcess MessengerProcess) shouldDeliverMessageToApplication(message MessageDTO) bool {
+    i := messengerProcess.VectorClockIndexMap[message.OID]
+    return message.shouldDeliverMessageToApplication(messengerProcess.VectorClock, i)
+}
+
 func (messengerProcess *MessengerProcess) deliverMessageToApplication(message MessageDTO) {
-    // increase the time of this messenger process since it received a message
-    i := messengerProcess.VectorClockIndexMap[messengerProcess.OID]
-    messengerProcess.VectorClock[i]++
     // update the vector clock
     for index, time := range messengerProcess.VectorClock {
         var maxTime int
@@ -71,28 +118,14 @@ func (messengerProcess *MessengerProcess) PostMessage(message MessageDTO, isSucc
     if messengerProcess.shouldDeliverMessageToApplication(message) {
         messengerProcess.deliverMessageToApplication(message)
         // if a message is delivered vector clock is updated and we need to check queued messages
-        for len(messengerProcess.QueuedMessages) > 0 {
-            var nextMessageToDeliver MessageDTO
-            var nextMessageToDeliverIndex int
-            for index, queuedMessage := range messengerProcess.QueuedMessages {
-                if messengerProcess.shouldDeliverMessageToApplication(queuedMessage) {
-                    nextMessageToDeliver = queuedMessage
-                    nextMessageToDeliverIndex = index
-                    break
-                }
-            }
-
-            // no message satisfies the condition
-            if nextMessageToDeliver.OID == "" {
-                break
-            }
+        nextMessageToDeliver, shouldDeliver := messengerProcess.popNextMessageToDeliver()
+        for shouldDeliver {
             messengerProcess.deliverMessageToApplication(nextMessageToDeliver)
-            messengerProcess.QueuedMessages = append(messengerProcess.QueuedMessages[:nextMessageToDeliverIndex],
-                messengerProcess.QueuedMessages[nextMessageToDeliverIndex+1:]...)
+            nextMessageToDeliver, shouldDeliver = messengerProcess.popNextMessageToDeliver()
         }
     } else {
         // add message to queue since it does not satisfy the condition to deliver
-        messengerProcess.QueuedMessages = append(messengerProcess.QueuedMessages, message)
+        messengerProcess.QueuedMessages.append(message)
     }
     *isSuccessful = true
     return nil
@@ -171,7 +204,9 @@ func checkPeersForStart(peers map[string]int, myAddress string) {
 func readPeersAndInitializeVectorClock(peerFileName string) (map[string]int, []int) {
     peersFile, err := os.Open(peerFileName)
     handleError(err)
-    defer peersFile.Close()
+    defer func() {
+        handleError(peersFile.Close())
+    }()
 
     peerToIndexMap := make(map[string]int)
     scanner := bufio.NewScanner(peersFile)
@@ -189,7 +224,10 @@ func getLocalAddress() string {
     }
     conn, err := net.Dial("udp", "eng.ku.edu.tr:80")
     handleError(err)
-    defer conn.Close()
+    defer func() {
+        handleError(conn.Close())
+    }()
+
     localAddr := conn.LocalAddr().(*net.UDPAddr)
     return localAddr.IP.String() + ":" + port
 }
@@ -211,12 +249,15 @@ func main() {
     _, ok := peers[myAddress]
 
     if !ok {
-        panic("Peers file does not include my address!")
+        panic("Peers file does not include my address: " + myAddress)
     }
 
     me := MessengerProcess{
-        OID:                 myAddress,
-        QueuedMessages:      nil,
+        OID: myAddress,
+        QueuedMessages: ConcurrentMessageSlice{
+            RWMutex:  sync.RWMutex{},
+            messages: nil,
+        },
         VectorClock:         vectorClock,
         VectorClockIndexMap: peers,
     }
@@ -235,6 +276,5 @@ func main() {
         transcript = scanner.Text()
         me.multicastMessage(transcript)
         fmt.Print("> Enter a message to send: ")
-        fmt.Println(me.VectorClock)
     }
 }
