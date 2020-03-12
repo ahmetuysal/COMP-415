@@ -65,6 +65,8 @@ type MessengerProcess struct {
     VectorClockIndexMap map[string]int
 }
 
+// Iterates all queued messages of the process and returns the first one who satisfies the message delivery conditions
+// returns an empty MessageDTO if there are no messages that satisfies the conditions
 func (messengerProcess *MessengerProcess) popNextMessageToDeliver() (MessageDTO, bool) {
     var nextMessageToDeliver MessageDTO
     var nextMessageToDeliverIndex int
@@ -98,6 +100,8 @@ func (messengerProcess MessengerProcess) shouldDeliverMessageToApplication(messa
     return message.shouldDeliverMessageToApplication(messengerProcess.VectorClock, i)
 }
 
+// Updates the vector clock of the process according to distributed multicast algorithm and prints the sender and message
+// transcript to standard out
 func (messengerProcess *MessengerProcess) deliverMessageToApplication(message MessageDTO) {
     // update the vector clock
     for index, time := range messengerProcess.VectorClock {
@@ -113,6 +117,7 @@ func (messengerProcess *MessengerProcess) deliverMessageToApplication(message Me
     fmt.Printf("%s: %s\n", message.OID, message.Transcript)
 }
 
+// RPC function to send a message to a peer
 func (messengerProcess *MessengerProcess) PostMessage(message MessageDTO, isSuccessful *bool) error {
     fmt.Printf("%+x\n", message)
     if messengerProcess.shouldDeliverMessageToApplication(message) {
@@ -131,6 +136,7 @@ func (messengerProcess *MessengerProcess) PostMessage(message MessageDTO, isSucc
     return nil
 }
 
+// Iterates over all peers and posts the message via RPC calls
 func (messengerProcess *MessengerProcess) multicastMessage(transcript string) {
     i := messengerProcess.VectorClockIndexMap[messengerProcess.OID]
     messengerProcess.VectorClock[i]++
@@ -149,6 +155,7 @@ func (messengerProcess *MessengerProcess) multicastMessage(transcript string) {
     }
 }
 
+// posts message to the peer at given address with an RPC call
 func postMessageToPeer(peerAddress string, message MessageDTO) {
     peerRpcConnection, err := rpc.Dial(CONNECTION_TYPE, peerAddress)
     handleError(err)
@@ -163,6 +170,7 @@ func handleError(e error) {
     }
 }
 
+// checks whether all peers are ready by trying to connect to all peers until everyone is available
 func checkPeersForStart(peers map[string]int, myAddress string) {
     fmt.Println("Welcome to Decentralized Group Messenger, please wait until all other peers are available.")
     peerAddresses := make([]string, len(peers))
@@ -201,6 +209,7 @@ func checkPeersForStart(peers map[string]int, myAddress string) {
     fmt.Println("All peers are available, you can start sending messages")
 }
 
+// reads the peer file and returns a peerToIndexMap and a initialVectorClock
 func readPeersAndInitializeVectorClock(peerFileName string) (map[string]int, []int) {
     peersFile, err := os.Open(peerFileName)
     handleError(err)
@@ -217,6 +226,7 @@ func readPeersAndInitializeVectorClock(peerFileName string) (map[string]int, []i
     return peerToIndexMap, initialVectorClock
 }
 
+// returns the local address of this device
 func getLocalAddress() string {
     port := DEFAULT_PORT
     if len(os.Args) > 1 {
