@@ -1,0 +1,337 @@
+\documentclass[a4paper]{article}
+
+\usepackage[english]{babel}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage[colorinlistoftodos]{todonotes}
+\usepackage[useregional]{datetime2}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{listings} 
+\usepackage[hidelinks]{hyperref}
+\usepackage{caption}
+\usepackage{titling}
+\usepackage{upquote}
+\usepackage{color}
+
+\usepackage{wrapfig}
+\usepackage{tikz}
+\usetikzlibrary{shapes.symbols,positioning, chains}
+
+\setcounter{secnumdepth}{4}
+
+\setlength{\droptitle}{-4em}
+
+\setlength{\intextsep}{6pt plus 2pt minus 2pt}
+
+%Project Title
+\newcommand{\handoutTitle}{Decentralized Group Messenger with Causally Ordered Multicast}
+%Homework Number
+
+% Handout date goes here.
+% Format: # Day of Month
+\newcommand{\handoutDate}{15th of March}
+
+%Contact to reach.
+\newcommand{\contactName}{Ahmet Uysal}
+\newcommand{\contactMail}{auysal16@ku.edu.tr}
+
+%Define colors as shown below to use in text.
+\definecolor{Red}{RGB}{255, 0, 0}
+\definecolor{Green}{RGB}{0, 255, 0}
+\definecolor{Blue}{RGB}{0, 0, 255}
+\definecolor{pblue}{rgb}{0.13,0.13,1}
+\definecolor{pgreen}{rgb}{0,0.5,0}
+\definecolor{pred}{rgb}{0.9,0,0}
+\definecolor{pgrey}{rgb}{0.46,0.45,0.48}
+
+% code listing style
+\lstset{language=go}
+\lstdefinestyle{mystyle}{
+showspaces=false,
+showtabs=false,
+breaklines=true,
+showstringspaces=false,
+captionpos=b,
+breakatwhitespace=true,
+commentstyle=\color{pgreen},
+keywordstyle=\color{pblue},
+stringstyle=\color{pred},
+frame=single,
+basicstyle=\ttfamily\footnotesize,
+numbers=left,                    
+numbersep=8pt,                  
+tabsize=4
+}
+\renewcommand{\lstlistingname}{Code snippet}
+ 
+\lstset{style=mystyle}
+
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{Decentralized Group Messenger}
+\lhead{Ahmet Uysal}
+\lfoot{\nouppercase{\leftmark}}
+\rfoot{Page \thepage}
+\thispagestyle{fancy}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0.4pt}
+
+\author{\contactName\\\href{mailto:\contactMail}{\contactMail}}
+
+\title{\handoutTitle}
+
+\date{Date: \handoutDate}
+
+\begin{document}
+
+\maketitle
+
+\tableofcontents
+
+\newpage
+
+\section{Introduction}
+
+A decentralized unstructured peer-to-peer group messenger application is implemented based on Causally Ordered Multicasting algorithm using Go programming language and RPC protocol. AWS EC2 instances are used as the distributed platform.
+
+\subsection{Assumptions}
+
+\begin{itemize}
+    \item Multicast group size is static.
+    \item Every peer has a file that contains addresses of all peers.
+    \item Peers are assumed to function correctly once the initial connection is established. Therefore, the system does not implement any fault tolerance mechanisms.
+\end{itemize}
+
+\section{Implementation}
+
+\subsection{\texttt{MessageDTO} Struct}
+\texttt{MessageDTO} struct is how the messages are represented in my implementation. It consists of the identifier (IP address + port) of the sender, message timestamp, and the message string.
+
+\begin{lstlisting}[caption={\texttt{MessageDTO} struct}]
+type MessageDTO struct {
+    Transcript string
+    OID        string
+    TimeStamp  []int
+}
+\end{lstlisting}
+\texttt{MessageDTO} struct also implements a method that checks whether a message should be delivered to application based on the Causally  Ordered  Multicasting  algorithm. This method returns true if $ts(m)[sender] = VC_{receiver}[sender] + 1$ and $ts(m)[k] \leq VC_{receiver}[k] \text{ for all } k \neq sender$, and false otherwise. 
+
+\begin{lstlisting}[caption={\texttt{shouldDeliverMessageToApplication} Implementation}, label=shouldDeliverMessageToApplication]
+func (message MessageDTO) shouldDeliverMessageToApplication(vectorClock []int, senderProcessIndex int) bool {
+    if message.TimeStamp[senderProcessIndex] != vectorClock[senderProcessIndex]+1 {
+        return false
+    }
+    for k, time := range vectorClock {
+        if k == senderProcessIndex {
+            continue
+        }
+        if message.TimeStamp[k] > time {
+            return false
+        }
+    }
+    return true
+}
+\end{lstlisting}
+
+\subsection{\texttt{ConcurrentMessageSlice} Struct}
+Decentralized group messenger needs to postpone the delivery of the messages that does not satisfy the requirements of \texttt{shouldDeliverMessageToApplication} method~\ref{shouldDeliverMessageToApplication}. In order to implement this, \texttt{MessengerProcess} structs need store queued messages in a data structure. However, Go Slices does not handle concurrency by themselves and mutexes are required to organize concurrent access and update scenarios. \texttt{ConcurrentMessageSlice} struct is created for this purpose. Implementation is based on a blog post by M. Nikolov. \cite{concurrentmapblog}
+
+\begin{lstlisting}[caption={\texttt{ConcurrentMessageSlice} Struct}]
+type ConcurrentMessageSlice struct {
+    sync.RWMutex
+    messages []MessageDTO
+}
+func (cms *ConcurrentMessageSlice) append(message MessageDTO) {
+    cms.Lock()
+    defer cms.Unlock()
+    cms.messages = append(cms.messages, message)
+}
+// Note: Removal of messages is implemented in MessengerProcess
+\end{lstlisting}
+
+\subsection{\texttt{MessengerProcess} Struct}
+
+\texttt{MessengerProcess} struct is the main type that is responsible for delivery and interpretation of \texttt{MessageDTO} instances. It represents a peer process that is connected to Decentralized Group Messenger service. Each \texttt{MessengerProcess} stores the identifier (IP address + port) of the peer, current vector clock of the peer, queued messages that are waiting for to be delivered to the application, and a map that relates identifiers of the peers to indices of the vector clock.
+
+\begin{lstlisting}[caption={\texttt{MessengerProcess} Struct}]
+type MessengerProcess struct {
+    OID                 string
+    QueuedMessages      ConcurrentMessageSlice
+    VectorClock         []int
+    VectorClockIndexMap map[string]int
+}
+\end{lstlisting}
+
+\subsubsection{\texttt{PostMessage} RPC Method}
+
+\texttt{PostMessage} RPC method allows peers to transmit \texttt{MessageDTO} instances using RPC and handles received \texttt{MessageDTO} instances on peers. Go ``net/rpc" package requires methods to follow a specific signature structure to be registered as an RPC call. In order to make a method publicly available to RPC calls, a method needs to:
+\begin{itemize}
+    \item Have a type that is exported (\texttt{MessengerProcess} type is exported)
+    \item Method itself is exported
+    \item Method has two arguments, both exported (or builtin) types.
+    \item The second argument is a pointer
+    \item Method has the return type \texttt{error}
+\end{itemize}
+
+\noindent \texttt{PostMessage} is the only method of \texttt{MessengerProcess} type that satisfies all these requirements, and therefore it is can be registered. All other functions are helpers to implement message handling and does not need to be registered as RPC calls. RPC registration is implemented in the \texttt{main} function as shown below.
+
+\begin{lstlisting}[caption={RPC call registration}]
+me := MessengerProcess{
+    OID: myAddress,
+    QueuedMessages: ConcurrentMessageSlice{
+        RWMutex:  sync.RWMutex{},
+        messages: nil,
+    },
+    VectorClock:         vectorClock,
+    VectorClockIndexMap: peers,
+}
+_ = rpc.Register(&me)
+\end{lstlisting}
+
+\noindent \texttt{PostMessage} method checks the received message for the requirements of being delivered to application. If the message satisfies the condition, it is delivered to application and the vector clock of the \texttt{MessengerProcess} is updated. Otherwise, the message is appended to the message queue. If a message is delivered to application and the vector clock is updated, \texttt{PostMessage} checks the message queue for messages that satisfy the delivery conditions based on the updated vector clocks. This procedure continues until there are no messages in the queue that satisfy delivery condition after a vector clock update. The \texttt{PostMessage} function implementation is given below along with \texttt{shouldDeliverMessageToApplication}, \texttt{deliverMessageToApplication}, and \texttt{popNextMessageToDeliver} helper methods.
+
+\begin{lstlisting}[caption={\texttt{PostMessage} RPC method}, label=PostMessage]
+func (messengerProcess *MessengerProcess) PostMessage(message MessageDTO, isSuccessful *bool) error {
+    if messengerProcess.shouldDeliverMessageToApplication(message){
+        messengerProcess.deliverMessageToApplication(message)
+        // if a message is delivered vector clock is updated
+        // we need to check queued messages
+        nextMessageToDeliver, shouldDeliver := messengerProcess.popNextMessageToDeliver()
+        for shouldDeliver {
+            messengerProcess
+                .deliverMessageToApplication(nextMessageToDeliver)
+            nextMessageToDeliver, shouldDeliver = messengerProcess.popNextMessageToDeliver()
+        }
+    } else {
+		// add message to queue
+        messengerProcess.QueuedMessages.append(message)
+    }
+    *isSuccessful = true
+    return nil
+}
+\end{lstlisting}
+
+\newpage
+
+\subsubsection{Helper Methods}
+
+\texttt{shouldDeliverMessageToApplication} is just a wrapper method around the \texttt{MessageDTO}'s \texttt{shouldDeliverMessageToApplication} method.
+
+\begin{lstlisting}[caption={\texttt{shouldDeliverMessageToApplication} helper method}]
+func (messengerProcess MessengerProcess) shouldDeliverMessageToApplication(message MessageDTO) bool {
+    i := messengerProcess.VectorClockIndexMap[message.OID]
+    return message.shouldDeliverMessageToApplication( messengerProcess.VectorClock, i)
+}
+\end{lstlisting}
+
+\noindent \texttt{deliverMessageToApplication} updates the vector clock of the \texttt{MessengerProcess} and prints the received message to standard output.
+
+\begin{lstlisting}[caption={\texttt{deliverMessageToApplication} helper method}]
+func (messengerProcess *MessengerProcess) deliverMessageToApplication(message MessageDTO) {
+    // update the vector clock
+    for index, time := range messengerProcess.VectorClock {
+        var maxTime int
+        if time > message.TimeStamp[index] {
+            maxTime = time
+        } else {
+            maxTime = message.TimeStamp[index]
+        }
+        messengerProcess.VectorClock[index] = maxTime
+    }
+    fmt.Printf("%s: %s\n", message.OID, message.Transcript)
+}
+\end{lstlisting}
+
+\noindent \texttt{popNextMessageToDeliver} iterates over queued messages, pops and returns the first message that satisfies the delivery condition. It also returns a second flag value to indicate whether it found a message that satisfy the conditions.
+
+\begin{lstlisting}[caption={\texttt{popNextMessageToDeliver} helper method}, basicstyle=\ttfamily\tiny]
+func (messengerProcess *MessengerProcess) popNextMessageToDeliver() (MessageDTO, bool) {
+    var nextMessageToDeliver MessageDTO
+    var nextMessageToDeliverIndex int
+    messengerProcess.QueuedMessages.Lock()
+    defer messengerProcess.QueuedMessages.Unlock()
+    \\ iterate over queued messages until a match is found
+    for index, queuedMessage := range messengerProcess.QueuedMessages.messages {
+        if messengerProcess.shouldDeliverMessageToApplication(queuedMessage) {
+            nextMessageToDeliver = queuedMessage
+            nextMessageToDeliverIndex = index
+            break
+        }
+    }
+    // no message satisfies the condition
+    if nextMessageToDeliver.OID == "" {
+        return MessageDTO{}, false
+    }
+    messengerProcess.QueuedMessages.messages = append(messengerProcess.QueuedMessages.messages[:nextMessageToDeliverIndex],
+        messengerProcess.QueuedMessages.messages[nextMessageToDeliverIndex+1:]...)
+    return nextMessageToDeliver, true
+}
+\end{lstlisting}
+
+\newpage
+
+\subsection{Execution Flow of the Program}
+
+The program starts by getting its own IP address and reads the peers.txt file. It gives an error and exits if it couldn't find its own identifier inside this file. Every \texttt{MessengerProcess} starts with a vector clocks consisting of all zeros. Then, it registers the \texttt{PostMessage} method to RPC as explained in the previous sections. A goroutine is created to continuously listen for incoming RPC connections. Each \texttt{MessengerProcess} then waits until all peers listed inside peers.txt file is available by continously trying to connect to each peer until it responds. After the connection is established, it informs the user and starts to accept message inputs. Vector clock of the \texttt{MessengerProcess} is increased by one only on message send events. Messages are multicasted by RPC calls to each peer.
+
+\section{Deployment to AWS EC2 Instances}
+Decentralized Group Messenger implementation is tested with five peers using AWS EC2 instances. I used PuTTY to transfer source files and connect to each client over SSH connection.
+
+\begin{figure}[!htb]
+\centering
+\includegraphics[width=\textwidth]{instances.PNG}
+\caption{{Five AWS EC2 instances that are used in the deployment phase.}}
+\end{figure}
+
+
+\begin{figure}[!htb]
+\centering
+\includegraphics[width=\textwidth]{hello.png}
+\caption{{Initial connection and messaging between group of five peers running on AWS EC2 instances}}
+\end{figure}
+
+\newpage
+\section{Possible Message Delivering Scenarios}
+In order to illustrate different scenarios for message delivery, I added a random delay between 0-5 seconds to each message transfer in \texttt{postMessageToPeer} function. Since this function is called in seperate goroutines for each peer, sender will send the messages to each peer in a random order with different delays. I also added some parts to print out the received message and vector clock information at the time of the event. On my trials, every peer delivered the message to application in the correct order.
+
+\begin{lstlisting}[caption={\texttt{postMessageToPeer} helper function}]
+func postMessageToPeer(peerAddress string, message MessageDTO) {
+    randomDelay := rand.Float64() * 5000
+    time.Sleep(time.Duration(randomDelay) * time.Millisecond)
+    peerRpcConnection, err := rpc.Dial(CONNECTION_TYPE, peerAddress)
+    handleError(err)
+    var isSuccessful bool
+    _ = peerRpcConnection.Call("MessengerProcess.PostMessage", message, &isSuccessful)
+    _ = peerRpcConnection.Close()
+}
+\end{lstlisting}
+
+\begin{figure}[!htb]
+\centering
+\includegraphics[width=\textwidth]{postpone.PNG}
+\caption{{A message that is postponed since it does not satisfy the condition.}}
+\end{figure}
+
+\begin{figure}[!htb]
+\centering
+\includegraphics[width=\textwidth]{msg.PNG}
+\caption{{Sending of 9 consequent messages with random delays.}}
+\end{figure}
+
+\begin{figure}[!htb]
+\centering
+\includegraphics[width=\textwidth]{msg_peer1.PNG}
+\caption{{Peer 1 Delivering the messages in the correct order}}
+\end{figure}
+
+
+
+ \begin{thebibliography}{9}
+\bibitem{concurrentmapblog} 
+Concurrent map and slice types in Go. Retrieved March 15, 2020, from \href{https://dnaeon.github.io/concurrent-maps-and-slices-in-go/}{https://dnaeon.github.io/concurrent-maps-and-slices-in-go/}
+ \end{thebibliography}   
+
+
+\end{document}
