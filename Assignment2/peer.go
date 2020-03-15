@@ -3,10 +3,12 @@ package main
 import (
     "bufio"
     "fmt"
+    "math/rand"
     "net"
     "net/rpc"
     "os"
     "sync"
+    "time"
 )
 
 const (
@@ -85,7 +87,6 @@ func (messengerProcess *MessengerProcess) popNextMessageToDeliver() (MessageDTO,
     if nextMessageToDeliver.OID == "" {
         return MessageDTO{}, false
     }
-    messengerProcess.deliverMessageToApplication(nextMessageToDeliver)
     messengerProcess.QueuedMessages.messages = append(messengerProcess.QueuedMessages.messages[:nextMessageToDeliverIndex],
         messengerProcess.QueuedMessages.messages[nextMessageToDeliverIndex+1:]...)
     return nextMessageToDeliver, true
@@ -119,8 +120,11 @@ func (messengerProcess *MessengerProcess) deliverMessageToApplication(message Me
 
 // RPC function to send a message to a peer
 func (messengerProcess *MessengerProcess) PostMessage(message MessageDTO, isSuccessful *bool) error {
-    fmt.Printf("%+x\n", message)
+    fmt.Printf("\nReceived a message: {\n\tSender ID: %s\n\tTranscript: %s\n\tTimeStamp: %x\n}\n",
+        message.OID, message.Transcript, message.TimeStamp)
+    fmt.Printf("My current vector clock is %x\n", messengerProcess.VectorClock)
     if messengerProcess.shouldDeliverMessageToApplication(message) {
+        fmt.Println("Message is delivered ")
         messengerProcess.deliverMessageToApplication(message)
         // if a message is delivered vector clock is updated and we need to check queued messages
         nextMessageToDeliver, shouldDeliver := messengerProcess.popNextMessageToDeliver()
@@ -129,6 +133,7 @@ func (messengerProcess *MessengerProcess) PostMessage(message MessageDTO, isSucc
             nextMessageToDeliver, shouldDeliver = messengerProcess.popNextMessageToDeliver()
         }
     } else {
+        fmt.Println("Message is postponed ")
         // add message to queue since it does not satisfy the condition to deliver
         messengerProcess.QueuedMessages.append(message)
     }
@@ -157,6 +162,8 @@ func (messengerProcess *MessengerProcess) multicastMessage(transcript string) {
 
 // posts message to the peer at given address with an RPC call
 func postMessageToPeer(peerAddress string, message MessageDTO) {
+    randomDelay := rand.Float64() * 10000
+    time.Sleep(time.Duration(randomDelay) * time.Millisecond)
     peerRpcConnection, err := rpc.Dial(CONNECTION_TYPE, peerAddress)
     handleError(err)
     var isSuccessful bool
@@ -197,7 +204,6 @@ func checkPeersForStart(peers map[string]int, myAddress string) {
 
             rpcConnection, err := rpc.Dial(CONNECTION_TYPE, peerAddresses[index])
             if err != nil {
-                fmt.Println(err)
                 continue
             } else {
                 _ = rpcConnection.Close()
