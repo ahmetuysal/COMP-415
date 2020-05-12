@@ -1,0 +1,178 @@
+% pdflatex --shell-escape presentation.tex & bibtex presentation & pdflatex --shell-escape presentation.tex & pdflatex --shell-escape presentation.tex
+\input{../KU-Beamer-Template/style/template.tex}
+\usepackage{../KU-Beamer-Template/style/koc} 
+\usepackage{minted}
+\usepackage{upquote}
+
+\title{Amazon Aurora} 
+\subtitle{Design Considerations for High Throughput Cloud-Native Relational Databases} 
+\newdate{date}{12}{05}{2020}
+\date{\displaydate{date}}
+\author{Ahmet Uysal}
+
+\titlegraphic{\includegraphics[width=0.4\textwidth]{../KU-Beamer-Template/style/images/logo_koc.pdf}}
+
+\setbeamercovered{invisible} % transparent
+
+\begin{document}
+  \maketitle
+
+    \frame{\frametitle{Agenda}\tableofcontents}
+    
+  \section{Problems}
+
+    \begin{frame}{Bottlenecks of OLTP Databases}
+      \begin{itemize}
+        \LARGE
+      \item Traditionally, read and write operations at individual devices constitutes the bottleneck.\\
+      \pause
+      In cloud environment, I/O operations are spread to many nodes and disks. \\
+      \pause
+      $\rightarrow$  The I/O bottleneck is moved to the network between Storage and Database layer \\
+      \pause
+      \item Multi-phase synchronization protocols such as 2-phase commit (2PC) are intolerant of failures, and cloud systems continuously have soft and hard failures ``\textbf{background noise}''.
+      \end{itemize}
+    \end{frame}
+    
+  \section{Aurora\cite{aurora} Architecture}
+
+    \begin{frame}{Key Ideas Behind Aurora Architechture}
+      \begin{itemize}
+        \LARGE
+        \item \textbf{Layered Architecture}: \pause Database and Storage are distinct layers, storage is implemented as an independent fault-tolerant service.
+        \pause
+        \item Responsibilities are delegated to storage layer when possible. Redo logging, durable storage, crash recovery, and backup mechanisms are implemented in the storage layer.
+        \pause
+        \item Minimize synchronous stalls and unnecessary writes/communication.
+      \end{itemize}
+    \end{frame}
+
+    \begin{frame}{Network I/O Comparison}
+      \vspace{-6mm}
+      \begin{columns}
+        \column{0.5\textwidth}
+        \begin{figure}[t]
+          \includegraphics[width=0.9\textwidth]{../images/sql_networkio.png}
+          \caption{Network IO in mirrored MySQL}
+          \centering
+        \end{figure}
+        \pause
+        \column{0.5\textwidth}
+        \begin{figure}[t]
+          \includegraphics[width=\textwidth]{../images/aurora_networkio.png}
+          \caption{Network IO in Amazon Aurora}
+          \centering
+        \end{figure}
+      \end{columns}
+    \end{frame}
+
+    \begin{frame}{Durability}
+      \LARGE
+      \textbf{AWS Structure}: AWS is divided into regions and regions are divided into \textbf{Availability Zones (AZ)}.\\ % Each AZ is connected to other AZs in the region via low latency links, but isolated for faults.
+      \pause
+      Aurora is designed to handle failure of an entire AZ and one additional node (AZ+1 fault-tolerance) without data loss, and has ability to write in the case of an AZ failure.\\
+      \pause
+      A quorum model with $V=6$, $V_w=4$ and $V_r=3$ is used.\\
+      \pause
+      This ensures every read have at least one voter from the most recent write quorum ($V_w + V_r > V$), and every write quorum have at least one member from the latest write quorum ($V_w > V / 2$).\\
+    \end{frame}
+
+    \begin{frame}{Durability}
+      \LARGE
+      In order to further decrease the likelihood of failures, the design should ensure the probability of double fault is sufficently low over the time it takes to repair a failure (Mean time to Repair). MTTR is decreased by dividing database volume into small fixed size (10 GB) segments.
+    \end{frame}
+
+    \begin{frame}{Role of Redo Log}
+      \LARGE
+      In traditional databases, a \textbf{redo log} is generated when a data page is modified. These logs are used to construct after-image from before-image of the page.\\
+      \pause
+      In Aurora, ``redo log is the database''. Redo logs are the only writes that cross the network between database and storage layers.\\
+      \pause
+      Storage layer \textbf{asynchronously} processes redo logs to create data pages.
+    \end{frame}
+
+    \begin{frame}{Storage Layer Design}
+      \LARGE
+      The main goal of Aurora's storage service design is to \textbf{minimize foreground write request latency}.\\
+      \pause
+      Majority of storage processing is run in background (asynchronously).\\
+      \pause
+      Unlike traditional systems, background processing has negative correlation with foreground processing.
+    \end{frame}
+
+    \begin{frame}{Storage Node Activities}
+      \LARGE
+      \begin{figure}[t]
+        \includegraphics[width=0.7\textwidth]{../images/storage_node.png}
+        \caption{IO Traffic in Aurora Storage Nodes}
+        \centering
+      \end{figure}
+    \end{frame}
+
+    \begin{frame}{Log Sequence Numbers (LSNs)}
+      \LARGE
+      In Aurora consensus protocol is based on log sequence numbers. Points of consistency and durability are maintained in the database layer. These points are updated upon receiving acknowledge message from the storage.
+    \end{frame}
+
+    \begin{frame}{Bird's Eye View}
+      \LARGE
+      \begin{figure}[t]
+        \includegraphics[width=0.7\textwidth]{../images/birds_eye.png}
+        \caption{Aurora Architecture: A Bird's Eye View}
+        \centering
+      \end{figure}
+    \end{frame}
+
+  \section{Results}
+    \begin{frame}{Scaling With Instance Size (CPU and Memory)}
+      \vspace{-6mm}
+      \begin{columns}
+        \column{0.5\textwidth}
+        \begin{figure}[t]
+          \includegraphics[width=0.9\textwidth]{../images/write_only.png}
+          \caption{Comparison of write performance between Aurora and MySQL}
+          \centering
+        \end{figure}
+        \pause
+        \column{0.5\textwidth}
+        \begin{figure}[t]
+          \includegraphics[width=\textwidth]{../images/read_only.png}
+          \caption{Comparison of read performance between Aurora and MySQL}
+          \centering
+        \end{figure}
+      \end{columns}
+    \end{frame}
+
+    \begin{frame}{Scaling with User Connections}
+      \begin{table}[]
+        \resizebox{\textwidth}{!}{
+          \begin{tabular}{|c|c|c|}
+          \hline
+          \textbf{Connections} & \textbf{Amazon Aurora} & \textbf{MySQL} \\ \hline \hline
+          \textbf{50}          & 40000                  & 10000          \\ \hline
+          \textbf{500}         & 71000                  & 21000          \\ \hline
+          \textbf{5000}        & 110000                 & 13000          \\ \hline
+          \end{tabular}
+        }
+      \end{table}
+      
+    
+    \end{frame}
+
+  \section{My Project Proposal}
+
+  \begin{frame}{My Project Proposal}
+    \LARGE
+    Apache Spark MLlib: Scalable machine learning library with many builtin algorithms. \\
+    
+    \includegraphics[width=0.5\textwidth]{../images/spark-logo.png}
+  \end{frame}
+
+  \section{References}
+		\begin{frame}{References}
+			\bibliographystyle{IEEETran}
+			\bibliography{references}
+		\end{frame}
+
+
+\end{document}
